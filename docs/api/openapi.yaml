@@ -1,0 +1,2166 @@
+openapi: 3.1.0
+info:
+  title: Burger Order Lab API
+  version: 0.14.0
+  description: |
+    Stage 0–A5 + B1–B5 + C1–C3 contract: catalog, session CSRF, roles, cart,
+    coupons, order lifecycle, admin management, keyset pagination, idempotent
+    batches, read-only preview, hardened Redis menu cache, and Prometheus/
+    Actuator observability with cache counters.
+servers:
+  - url: http://127.0.0.1:5173
+    description: Vite dev server proxy (recommended)
+  - url: http://127.0.0.1:8080
+    description: Spring Boot direct
+tags:
+  - name: Coupons
+    description: Customer coupon claiming and owned coupons
+  - name: Orders
+    description: Customer order creation and detail
+  - name: Auth
+    description: Session login, CSRF and current user
+  - name: Staff
+    description: Staff-only store scope
+  - name: Admin
+    description: Admin catalog, optimistic-lock edits, stock adjustments and audit
+  - name: Stores
+    description: Store selection and store-scoped menu reads
+  - name: System
+    description: Operational checks
+  - name: Actuator
+    description: Spring Boot Actuator health probes
+paths:
+  /api/stores:
+    get:
+      tags: [Stores]
+      operationId: listStores
+      summary: List stores with business, accepting and orderable state
+      security: []
+      responses:
+        '200':
+          description: Stores ordered by id.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreListResponse'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/stores/{storeId}:
+    get:
+      tags: [Stores]
+      operationId: getStore
+      summary: Get one store
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/StoreId'
+      responses:
+        '200':
+          description: Store found.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/StoreNotFound'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/stores/{storeId}/menu:
+    get:
+      tags: [Stores]
+      operationId: getStoreMenu
+      summary: Get the on-sale menu for one store
+      description: |
+        Rejects a missing store with 404. Empty categories is a valid 200
+        response. Products are scoped by store_id and on_sale, ordered by
+        category_sort, sort_order and id. The menu is cache-aside in Redis with
+        a configurable TTL; X-Cache reports HIT, MISS, or BYPASS when Redis is
+        unavailable.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/StoreId'
+      responses:
+        '200':
+          description: Store plus grouped on-sale products.
+          headers:
+            X-Cache:
+              $ref: '#/components/headers/CacheStatus'
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/StoreNotFound'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/csrf:
+    get:
+      tags: [Auth]
+      operationId: getCsrfToken
+      summary: Issue a CSRF cookie and return its token
+      security: []
+      responses:
+        '200':
+          description: CSRF token issued; XSRF-TOKEN cookie is set.
+          headers:
+            Set-Cookie:
+              description: XSRF-TOKEN=...; Path=/; SameSite=Lax
+              schema:
+                type: string
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfTokenResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Authenticate with JSON and create a session
+      description: |
+        Requires both the XSRF-TOKEN cookie and the X-XSRF-TOKEN header.
+        Successful login sets BURGER_SESSION as HttpOnly and SameSite=Lax.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated user and session cookie.
+          headers:
+            Set-Cookie:
+              description: BURGER_SESSION=...; Path=/; HttpOnly; SameSite=Lax
+              schema:
+                type: string
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid credentials.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                code: INVALID_CREDENTIALS
+                message: 用户名或密码错误
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/auth/login
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Get the current session user
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Current authenticated user.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Invalidate the current session
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session invalidated; no response body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/staff/workspace:
+    get:
+      tags: [Staff]
+      operationId: getStaffWorkspace
+      summary: Stores assigned to the current staff member
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Stores filtered by the authenticated user's membership.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffWorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/stores/{storeId}/stock-adjustments/batch/preview:
+    post:
+      tags: [Admin]
+      operationId: previewAdminStockBatch
+      summary: Dry-run batch validation without writes
+      description: |
+        Validates each line and returns per-line results and expected available
+        values. No batch, stock log, audit, or stock row is written. Execution
+        still uses the idempotent all-or-nothing batch endpoint.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/StoreIdPath'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminStockBatchRequest'
+      responses:
+        '200':
+          description: Per-line validation result; no stock changes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStockPreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/stores/{storeId}/stock-adjustments/batch:
+    post:
+      tags: [Admin]
+      operationId: adjustAdminStockBatch
+      summary: All-or-nothing idempotent stock batch
+      description: |
+        Each line is validated; any invalid line rolls back the whole batch.
+        A unique (admin_user_id, idempotency_key) row is inserted as PROCESSING
+        and completed in the same transaction. Same key + same request replays
+        the batch; same key + different request returns 409.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/StoreIdPath'
+        - $ref: '#/components/parameters/BatchIdempotencyKey'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminStockBatchRequest'
+      responses:
+        '201':
+          description: Batch applied.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStockBatchResponse'
+        '200':
+          description: Same key and request replayed the original batch.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStockBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Store/product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '409':
+          description: Stock/row conflict or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                stock:
+                  value:
+                    code: STOCK_INSUFFICIENT
+                    message: 商品可售库存不足
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/admin/stores/1/stock-adjustments/batch
+                idempotency:
+                  value:
+                    code: IDEMPOTENCY_CONFLICT
+                    message: 相同幂等键的批次内容不一致
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/admin/stores/1/stock-adjustments/batch
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/stores/{storeId}/products/page:
+    get:
+      tags: [Admin]
+      operationId: pageAdminProducts
+      summary: Keyset page of admin products
+      description: |
+        Stable order by product id. afterId is the last id from the previous
+        page; OFFSET is not used. The mapper explicitly forces the store/id or
+        store/on_sale/id index because MySQL otherwise chose filesort on the
+        small demo data set.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/StoreIdPath'
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: onSale
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Page plus next cursor (null when no more rows).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminProductPageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Store not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/stores/{storeId}/products:
+    get:
+      tags: [Admin]
+      operationId: listAdminProducts
+      summary: Products and stock for one store, including off-sale items
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/StoreIdPath'
+      responses:
+        '200':
+          description: Product and stock rows with product/stock versions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminProductResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Store not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/products/{productId}:
+    patch:
+      tags: [Admin]
+      operationId: updateAdminProduct
+      summary: Update price/on-sale with product version
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminProductUpdateRequest'
+      responses:
+        '200':
+          description: Product updated; version incremented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminProductResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '409':
+          description: Product version conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                code: VERSION_CONFLICT
+                message: 商品已被其他管理员修改，请刷新后重试
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/admin/products/1001
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/products/{productId}/stock-adjustments:
+    post:
+      tags: [Admin]
+      operationId: adjustAdminStock
+      summary: Adjust available stock with stock version
+      description: |
+        available += delta only when the client version matches and the result
+        is non-negative. Writes an ADJUST stock log with order_id NULL and an
+        admin audit record in the same transaction.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminStockAdjustmentRequest'
+      responses:
+        '200':
+          description: Stock adjusted; new version returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStockResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Product/stock not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '409':
+          description: Version conflict or negative stock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                version:
+                  value:
+                    code: VERSION_CONFLICT
+                    message: 库存已被其他管理员修改，请刷新后重试
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/admin/products/1001/stock-adjustments
+                negative:
+                  value:
+                    code: STOCK_INSUFFICIENT
+                    message: 可售库存不足，不能调整为负数
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/admin/products/1001/stock-adjustments
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/audit-logs:
+    get:
+      tags: [Admin]
+      operationId: listAdminAuditLogs
+      summary: Recent admin operations
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/AuditLimit'
+      responses:
+        '200':
+          description: Audit rows ordered by id descending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminAuditLogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/entry:
+    get:
+      tags: [Admin]
+      operationId: getAdminEntry
+      summary: Admin base entry
+      description: Only proves ADMIN authorization; no management data is returned yet.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Admin base entry.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminEntryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/coupons/available:
+    get:
+      tags: [Coupons]
+      operationId: listAvailableCoupons
+      summary: Active coupon templates with per-user claim state
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Active templates with remaining quantity and claimed flag.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CouponTemplateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/coupons/mine:
+    get:
+      tags: [Coupons]
+      operationId: listMyCoupons
+      summary: Coupons owned by the current customer
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Owned coupons including UNUSED/LOCKED/USED.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserCouponResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/coupons/{templateId}/claim:
+    post:
+      tags: [Coupons]
+      operationId: claimCoupon
+      summary: Claim one coupon; total and per-user gates
+      description: |
+        The template quantity is incremented with a conditional UPDATE
+        (claimed_quantity < total_quantity) and the user insert has a unique
+        (template_id, user_id) key. Both are in one transaction.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/CouponTemplateId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '201':
+          description: Coupon claimed and UNUSED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserCouponResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Already claimed, sold out, or unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                claimed:
+                  value:
+                    code: COUPON_ALREADY_CLAIMED
+                    message: 该优惠券已领取
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/coupons/1/claim
+                soldOut:
+                  value:
+                    code: COUPON_SOLD_OUT
+                    message: 优惠券已领完
+                    traceId: a1b2c3d4e5f6
+                    timestamp: '2026-11-09T10:00:00Z'
+                    path: /api/coupons/1/claim
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/orders:
+    post:
+      tags: [Orders]
+      operationId: createOrder
+      summary: Create an order and reserve stock
+      description: |
+        The client sends only product ids and quantities; the server reloads
+        store/product state and prices. The Idempotency-Key is scoped by the
+        authenticated user and CREATE_ORDER. Same key + same body replays the
+        original order; same key + different body returns 409.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created and stock reserved.
+          headers:
+            Location:
+              description: /api/orders/{id}
+              schema:
+                type: string
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '200':
+          description: Replayed result for the same idempotency key and request.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/OrderConflict'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/orders/{orderId}:
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Read an owned order
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order owned by the current customer.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/orders/{orderId}/pay:
+    post:
+      tags: [Orders]
+      operationId: payOrder
+      summary: Mock payment; WAIT_PAY -> WAIT_MAKE
+      description: |
+        Requires ownership, WAIT_PAY and expires_at > now. Reserved stock is
+        decremented without touching available again. A PAYMENT_SUCCEEDED event
+        is inserted in the same transaction.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Order moved to WAIT_MAKE.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderTransitionConflict'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/orders/{orderId}/cancel:
+    post:
+      tags: [Orders]
+      operationId: cancelOrder
+      summary: Cancel an unpaid order and release stock
+      description: |
+        A customer may cancel only an owned WAIT_PAY order. The conditional
+        update selects the winner; stock reserved is released with a RELEASE log
+        and a CANCELLED event in the same transaction. Duplicate cancellation
+        returns 409. Timeout cancellation uses the same conditional transition
+        without an HTTP endpoint.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Order moved to CANCELLED and stock released.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderTransitionConflict'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/orders/{orderId}/events:
+    get:
+      tags: [Orders]
+      operationId: getOrderEvents
+      summary: Customer-owned order event trail
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Events ordered by id.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderEventResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/staff/orders:
+    get:
+      tags: [Staff]
+      operationId: listStaffOrders
+      summary: Active orders for one staff-owned store
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/StoreIdQuery'
+      responses:
+        '200':
+          description: WAIT_MAKE/MAKING/READY orders ordered by created_at,id.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffOrderListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The staff member is not assigned to this store.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                code: STORE_NOT_FOUND
+                message: 门店不存在或无权访问
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/staff/orders
+        '503':
+          $ref: '#/components/responses/DatabaseUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/staff/orders/{orderId}/start:
+    post:
+      tags: [Staff]
+      operationId: startOrder
+      summary: WAIT_MAKE -> MAKING
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Order moved to MAKING.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderTransitionConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/staff/orders/{orderId}/ready:
+    post:
+      tags: [Staff]
+      operationId: markOrderReady
+      summary: MAKING -> READY
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Order moved to READY.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderTransitionConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/staff/orders/{orderId}/complete:
+    post:
+      tags: [Staff]
+      operationId: completeOrder
+      summary: READY -> COMPLETED
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Order moved to COMPLETED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderTransitionConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/system/menu-cache:
+    get:
+      tags: [System]
+      operationId: getMenuCacheStats
+      summary: Menu cache counters
+      security: []
+      responses:
+        '200':
+          description: Process-local counters since start.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuCacheStats'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/system/liveness:
+    get:
+      tags: [System]
+      operationId: getLiveness
+      summary: Process liveness
+      description: Does not query the database.
+      security: []
+      responses:
+        '200':
+          description: The process can serve HTTP requests.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/system/status:
+    get:
+      tags: [System]
+      operationId: getSystemStatus
+      summary: Database and migration readiness snapshot
+      description: |
+        Checks the JDBC connection and reads system_metadata plus the latest
+        successful Flyway migration through MyBatis. A failed database or a
+        missing migration returns HTTP 503 with the same full snapshot shape.
+      security: []
+      responses:
+        '200':
+          description: Application and database are ready.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatusResponse'
+        '503':
+          description: Database unavailable or schema not ready.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatusResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /actuator/health/liveness:
+    get:
+      tags: [Actuator]
+      operationId: getActuatorLiveness
+      summary: Actuator liveness group
+      security: []
+      responses:
+        '200':
+          description: Liveness state is UP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthComponent'
+  /actuator/health/readiness:
+    get:
+      tags: [Actuator]
+      operationId: getActuatorReadiness
+      summary: Actuator readiness group including the database indicator
+      security: []
+      responses:
+        '200':
+          description: Readiness state and database are UP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthComponent'
+        '503':
+          description: Readiness state or database is DOWN.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthComponent'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: BURGER_SESSION
+  parameters:
+    StoreId:
+      name: storeId
+      in: path
+      required: true
+      description: Store primary key.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    CsrfHeader:
+      name: X-XSRF-TOKEN
+      in: header
+      required: true
+      description: Token value from the XSRF-TOKEN cookie.
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 8-64 characters of [A-Za-z0-9._-], scoped by user and CREATE_ORDER.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+        pattern: '^[A-Za-z0-9._-]+$'
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    BatchIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 8-64 characters [A-Za-z0-9._-], scoped by admin user.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+        pattern: '^[A-Za-z0-9._-]+$'
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    StoreIdPath:
+      name: storeId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    AuditLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CouponTemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    StoreIdQuery:
+      name: storeId
+      in: query
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+  headers:
+    CacheStatus:
+      description: Server-side menu cache result.
+      schema:
+        type: string
+        enum: [HIT, MISS, BYPASS]
+    IdempotentReplayed:
+      description: "false for the original creation, true for a replay."
+      schema:
+        type: boolean
+    TraceId:
+      description: Correlates the response with server logs.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+    NoStore:
+      description: Health responses must not be cached.
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: No valid authenticated session.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            code: UNAUTHORIZED
+            message: 请先登录
+            traceId: a1b2c3d4e5f6
+            timestamp: '2026-11-09T10:00:00Z'
+            path: /api/auth/me
+    Forbidden:
+      description: Role is insufficient or CSRF validation failed.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          examples:
+            role:
+              value:
+                code: FORBIDDEN
+                message: 没有权限执行该操作
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/admin/entry
+            csrf:
+              value:
+                code: CSRF_INVALID
+                message: CSRF 校验失败，请刷新页面后重试
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/auth/login
+    BadRequest:
+      description: A path or query parameter has an invalid format.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            code: INVALID_PARAMETER
+            message: 请求参数格式不正确
+            traceId: a1b2c3d4e5f6
+            timestamp: '2026-11-09T10:00:00Z'
+            path: /api/stores/abc
+    OrderNotFound:
+      description: The order does not exist or belongs to another customer.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            code: ORDER_NOT_FOUND
+            message: 订单不存在
+            traceId: a1b2c3d4e5f6
+            timestamp: '2026-11-09T10:00:00Z'
+            path: /api/orders/999
+    OrderTransitionConflict:
+      description: The order state or deadline does not permit this transition.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          examples:
+            expired:
+              value:
+                code: ORDER_EXPIRED
+                message: 订单已过期，无法支付
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/orders/7/pay
+            status:
+              value:
+                code: ORDER_STATUS_CONFLICT
+                message: 订单状态已变化，当前状态：MAKING
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/staff/orders/7/start
+    OrderConflict:
+      description: A business/idempotency conflict; the transaction rolled back.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          examples:
+            stock:
+              value:
+                code: STOCK_INSUFFICIENT
+                message: 商品库存不足：经典牛肉堡
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/orders
+            idempotency:
+              value:
+                code: IDEMPOTENCY_CONFLICT
+                message: 相同幂等键的请求内容不一致
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/orders
+            coupon:
+              value:
+                code: COUPON_NOT_USABLE
+                message: 优惠券已被其他订单使用
+                traceId: a1b2c3d4e5f6
+                timestamp: '2026-11-09T10:00:00Z'
+                path: /api/orders
+    StoreNotFound:
+      description: No store exists for the supplied id.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            code: STORE_NOT_FOUND
+            message: 门店不存在
+            traceId: a1b2c3d4e5f6
+            timestamp: '2026-11-09T10:00:00Z'
+            path: /api/stores/999
+    DatabaseUnavailable:
+      description: The database dependency is currently unavailable.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            code: DATABASE_UNAVAILABLE
+            message: 数据库暂时不可用，请稍后重试
+            traceId: a1b2c3d4e5f6
+            timestamp: '2026-11-09T10:00:00Z'
+            path: /api/stores
+    InternalError:
+      description: Unexpected server failure; no internal details are exposed.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+  schemas:
+    HealthState:
+      type: string
+      enum: [UP, DEGRADED, DOWN]
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service, version, checkedAt, uptimeSeconds]
+      properties:
+        status:
+          type: string
+          const: UP
+        service:
+          type: string
+          example: burger-order-api
+        version:
+          type: string
+          example: 0.1.0-SNAPSHOT
+        checkedAt:
+          type: string
+          format: date-time
+        uptimeSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+    ApplicationStatus:
+      type: object
+      additionalProperties: false
+      required: [status, name, version, javaVersion, uptimeSeconds]
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthState'
+        name:
+          type: string
+        version:
+          type: string
+        javaVersion:
+          type: string
+          example: 21.0.12
+        uptimeSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+    DatabaseStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - connected
+        - product
+        - version
+        - latencyMs
+        - schemaReady
+        - flywayVersion
+        - lastMigration
+        - code
+        - message
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthState'
+        connected:
+          type: boolean
+        product:
+          type: [string, 'null']
+          example: MySQL
+        version:
+          type: [string, 'null']
+          example: 8.4.13
+        latencyMs:
+          type: integer
+          format: int64
+          minimum: 0
+        schemaReady:
+          type: boolean
+        flywayVersion:
+          type: [string, 'null']
+          example: '1'
+        lastMigration:
+          type: [string, 'null']
+          example: create system metadata
+        code:
+          type: [string, 'null']
+          enum:
+            - DATABASE_UNAVAILABLE
+            - SCHEMA_NOT_READY
+            - null
+        message:
+          type: [string, 'null']
+    SystemStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt, traceId, application, database]
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthState'
+        checkedAt:
+          type: string
+          format: date-time
+        traceId:
+          type: [string, 'null']
+        application:
+          $ref: '#/components/schemas/ApplicationStatus'
+        database:
+          $ref: '#/components/schemas/DatabaseStatus'
+    StoreBusinessStatus:
+      type: string
+      enum: [OPEN, CLOSED]
+    Store:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - code
+        - name
+        - address
+        - latitude
+        - longitude
+        - businessStatus
+        - acceptingOrders
+        - orderable
+        - openingHours
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        code:
+          type: string
+          maxLength: 32
+        name:
+          type: string
+          maxLength: 80
+        address:
+          type: string
+          maxLength: 255
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        businessStatus:
+          $ref: '#/components/schemas/StoreBusinessStatus'
+        acceptingOrders:
+          type: boolean
+        orderable:
+          type: boolean
+          description: Derived as businessStatus == OPEN && acceptingOrders.
+        openingHours:
+          type: string
+          example: 10:00–22:00
+    StoreListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Store'
+    MenuItem:
+      type: object
+      additionalProperties: false
+      required: [id, code, name, description, price]
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+          example: '32.00'
+          description: Decimal string; never converted to a JavaScript number by the server contract.
+    MenuCategory:
+      type: object
+      additionalProperties: false
+      required: [code, name, products]
+      properties:
+        code:
+          type: string
+          example: BURGER
+        name:
+          type: string
+          example: 汉堡
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItem'
+    MenuResponse:
+      type: object
+      additionalProperties: false
+      required: [store, categories]
+      properties:
+        store:
+          $ref: '#/components/schemas/Store'
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuCategory'
+    UserRole:
+      type: string
+      enum: [CUSTOMER, STAFF, ADMIN]
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    AuthUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName, role]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        displayName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+    CsrfTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [token, headerName, parameterName]
+      properties:
+        token:
+          type: string
+        headerName:
+          type: string
+          example: X-XSRF-TOKEN
+        parameterName:
+          type: string
+          example: _csrf
+    StaffStore:
+      type: object
+      additionalProperties: false
+      required: [id, code, name, address, businessStatus, acceptingOrders, orderable]
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        businessStatus:
+          $ref: '#/components/schemas/StoreBusinessStatus'
+        acceptingOrders:
+          type: boolean
+        orderable:
+          type: boolean
+    StaffWorkspaceResponse:
+      type: object
+      additionalProperties: false
+      required: [stores]
+      properties:
+        stores:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaffStore'
+    AdminEntryResponse:
+      type: object
+      additionalProperties: false
+      required: [role, available, message, checkedAt]
+      properties:
+        role:
+          type: string
+          const: ADMIN
+        available:
+          type: boolean
+        message:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+    OrderStatus:
+      type: string
+      enum: [WAIT_PAY, WAIT_MAKE, MAKING, READY, COMPLETED, CANCELLED]
+    CreateOrderItemRequest:
+      type: object
+      additionalProperties: false
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: integer
+          format: int64
+          minimum: 1
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 99
+    CreateOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [storeId, items]
+      properties:
+        storeId:
+          type: integer
+          format: int64
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CreateOrderItemRequest'
+        userCouponId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional owned UNUSED coupon to lock for this order.
+    OrderItemResponse:
+      type: object
+      additionalProperties: false
+      required: [productId, productCode, productName, unitPrice, quantity, lineAmount]
+      properties:
+        productId:
+          type: integer
+          format: int64
+        productCode:
+          type: string
+        productName:
+          type: string
+        unitPrice:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        quantity:
+          type: integer
+        lineAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+    OrderResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - orderNo
+        - status
+        - storeId
+        - storeName
+        - totalAmount
+        - discountAmount
+        - currency
+        - expiresAt
+        - createdAt
+        - items
+      properties:
+        id:
+          type: integer
+          format: int64
+        orderNo:
+          type: string
+          example: BO2026110919572549DBB2
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        storeId:
+          type: integer
+          format: int64
+        storeName:
+          type: string
+        totalAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+          example: '59.00'
+        discountAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+          example: '5.00'
+        currency:
+          type: string
+          example: CNY
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemResponse'
+    OrderEventResponse:
+      type: object
+      additionalProperties: false
+      required: [id, eventType, fromStatus, toStatus, operatorName, reason, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        eventType:
+          type: string
+          example: PAYMENT_SUCCEEDED
+        fromStatus:
+          oneOf:
+            - $ref: '#/components/schemas/OrderStatus'
+            - type: 'null'
+        toStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        operatorName:
+          type: [string, 'null']
+          example: 演示顾客
+        reason:
+          type: [string, 'null']
+          example: 模拟支付成功
+        createdAt:
+          type: string
+          format: date-time
+    StaffOrderListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderResponse'
+    CouponTemplateResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - code
+        - name
+        - discountAmount
+        - minOrderAmount
+        - remainingQuantity
+        - claimed
+        - validFrom
+        - validTo
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        discountAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        minOrderAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        remainingQuantity:
+          type: integer
+        claimed:
+          type: boolean
+        validFrom:
+          type: string
+          format: date-time
+        validTo:
+          type: string
+          format: date-time
+    UserCouponResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - templateId
+        - code
+        - name
+        - discountAmount
+        - minOrderAmount
+        - status
+        - orderId
+        - claimedAt
+        - usedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        templateId:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        discountAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        minOrderAmount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        status:
+          type: string
+          enum: [UNUSED, LOCKED, USED]
+        orderId:
+          type: [integer, 'null']
+          format: int64
+        claimedAt:
+          type: string
+          format: date-time
+        usedAt:
+          type: [string, 'null']
+          format: date-time
+    AdminProductResponse:
+      type: object
+      additionalProperties: false
+      required: [id, storeId, code, name, categoryName, price, onSale, version, available, reserved, stockVersion]
+      properties:
+        id:
+          type: integer
+          format: int64
+        storeId:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        categoryName:
+          type: string
+        price:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+        onSale:
+          type: boolean
+        version:
+          type: integer
+        available:
+          type: integer
+        reserved:
+          type: integer
+        stockVersion:
+          type: integer
+    AdminProductUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [price, onSale, version]
+      properties:
+        price:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+          example: '33.50'
+        onSale:
+          type: boolean
+        version:
+          type: integer
+          minimum: 0
+    AdminStockAdjustmentRequest:
+      type: object
+      additionalProperties: false
+      required: [delta, version, reason]
+      properties:
+        delta:
+          type: integer
+          example: 5
+        version:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+          maxLength: 200
+    AdminStockResponse:
+      type: object
+      additionalProperties: false
+      required: [productId, available, reserved, version]
+      properties:
+        productId:
+          type: integer
+          format: int64
+        available:
+          type: integer
+        reserved:
+          type: integer
+        version:
+          type: integer
+    AdminAuditLogResponse:
+      type: object
+      additionalProperties: false
+      required: [id, actorName, action, targetType, targetId, detail, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actorName:
+          type: string
+        action:
+          type: string
+        targetType:
+          type: string
+        targetId:
+          type: integer
+          format: int64
+        detail:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AdminProductPageResponse:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminProductResponse'
+        nextCursor:
+          type: [integer, 'null']
+          format: int64
+        hasMore:
+          type: boolean
+    AdminStockBatchLineRequest:
+      type: object
+      additionalProperties: false
+      required: [productId, delta, reason]
+      properties:
+        productId:
+          type: integer
+          format: int64
+        delta:
+          type: integer
+          example: 1
+        reason:
+          type: string
+          maxLength: 200
+    AdminStockBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AdminStockBatchLineRequest'
+    AdminStockBatchLineResponse:
+      type: object
+      additionalProperties: false
+      required: [productId, delta, reason, availableBefore, availableAfter, stockVersionAfter]
+      properties:
+        productId:
+          type: integer
+          format: int64
+        delta:
+          type: integer
+        reason:
+          type: string
+        availableBefore:
+          type: integer
+        availableAfter:
+          type: integer
+        stockVersionAfter:
+          type: integer
+    AdminStockBatchResponse:
+      type: object
+      additionalProperties: false
+      required: [batchId, appliedCount, lines]
+      properties:
+        batchId:
+          type: integer
+          format: int64
+        appliedCount:
+          type: integer
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminStockBatchLineResponse'
+    AdminStockPreviewLineResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - lineNo
+        - productId
+        - delta
+        - reason
+        - valid
+        - code
+        - message
+        - availableBefore
+        - availableAfter
+      properties:
+        lineNo:
+          type: integer
+        productId:
+          type: [integer, 'null']
+          format: int64
+        delta:
+          type: [integer, 'null']
+        reason:
+          type: [string, 'null']
+        valid:
+          type: boolean
+        code:
+          type: [string, 'null']
+        message:
+          type: [string, 'null']
+        availableBefore:
+          type: [integer, 'null']
+        availableAfter:
+          type: [integer, 'null']
+    AdminStockPreviewResponse:
+      type: object
+      additionalProperties: false
+      required: [valid, errorCount, lines]
+      properties:
+        valid:
+          type: boolean
+        errorCount:
+          type: integer
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminStockPreviewLineResponse'
+    MenuCacheStats:
+      type: object
+      additionalProperties: false
+      required: [hit, miss, bypass, negative, stampedeWait]
+      properties:
+        hit:
+          type: integer
+          format: int64
+        miss:
+          type: integer
+          format: int64
+        bypass:
+          type: integer
+          format: int64
+        negative:
+          type: integer
+          format: int64
+        stampedeWait:
+          type: integer
+          format: int64
+    HealthComponent:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+    ApiErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message, traceId, timestamp, path]
+      properties:
+        code:
+          type: string
+          example: INTERNAL_ERROR
+        message:
+          type: string
+          example: 服务暂时不可用，请稍后重试
+        traceId:
+          type: [string, 'null']
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+          example: /api/system/status

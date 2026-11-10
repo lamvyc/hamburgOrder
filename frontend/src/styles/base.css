@@ -1,0 +1,98 @@
+:root {
+  color-scheme: light;
+  --paper: #f4efe4;
+  --paper-deep: #e8dfcf;
+  --ink: #1e1b17;
+  --muted-strong: #514a42;
+  --muted: #776e63;
+  --line: rgba(30, 27, 23, 0.16);
+  --line-strong: rgba(30, 27, 23, 0.42);
+  --ketchup: #c43d2f;
+  --mustard: #e5aa32;
+  --green: #276a4e;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Songti SC", Georgia, serif;
+  --font-sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+
+  --el-color-primary: var(--ketchup);
+  --el-color-primary-light-3: #d47066;
+  --el-color-primary-light-5: #df948c;
+  --el-color-primary-light-7: #e9b8b3;
+  --el-color-primary-light-8: #f0cbc7;
+  --el-color-primary-light-9: #f7e3e1;
+  --el-color-primary-dark-2: #9d3026;
+  --el-border-radius-base: 4px;
+  --el-font-family: var(--font-sans);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--paper);
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background:
+    linear-gradient(90deg, rgba(30, 27, 23, 0.025) 1px, transparent 1px) 0 0 / 72px 72px,
+    var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body::before {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  background-image: radial-gradient(rgba(30, 27, 23, 0.17) 0.65px, transparent 0.65px);
+  background-size: 7px 7px;
+  content: "";
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+code {
+  padding: 0.1em 0.28em;
+  border-radius: 3px;
+  background: rgba(30, 27, 23, 0.07);
+  font-size: 0.9em;
+}
+
+::selection {
+  background: var(--mustard);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ketchup);
+  outline-offset: 3px;
+}

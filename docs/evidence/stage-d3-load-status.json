@@ -1,0 +1,19 @@
+{
+  "baseUrl": "http://127.0.0.1:18080",
+  "path": "/api/system/status",
+  "requests": 100,
+  "concurrency": 10,
+  "warmup": 5,
+  "errors": 0,
+  "elapsedMs": 280.02,
+  "throughputRps": 357.12,
+  "minMs": 2.7,
+  "p50Ms": 5.55,
+  "p95Ms": 225.44,
+  "p99Ms": 230.22,
+  "maxMs": 230.32,
+  "cache": {
+    "NONE": 105
+  },
+  "p95LimitMs": 1000
+}

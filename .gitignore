@@ -1,0 +1,30 @@
+# Local secrets and machine-specific settings
+.env
+.env.local
+.env.*.local
+frontend/.env.local
+frontend/.env.*.local
+
+# Java / Maven
+backend/target/
+*.class
+*.log
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+.pnpm-store/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Test artifacts
+test-results/
+playwright-report/
+.m2/
+.cache/
+backups/

@@ -1,0 +1,48 @@
+{
+  "name": "burger-order-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node e2e/a2-smoke.mjs",
+    "test:e2e:a3": "node e2e/a3-smoke.mjs",
+    "test:e2e:a4": "node e2e/a4-smoke.mjs",
+    "test:e2e:a5": "node e2e/a5-smoke.mjs",
+    "test:e2e:b1": "node e2e/b1-smoke.mjs",
+    "test:e2e:b2": "node e2e/b2-smoke.mjs",
+    "test:e2e:b3": "node e2e/b3-smoke.mjs",
+    "test:e2e:b4": "node e2e/b4-smoke.mjs",
+    "test:e2e:b5": "node e2e/b5-smoke.mjs",
+    "test:e2e:c1": "node e2e/c1-smoke.mjs",
+    "test:e2e:c2": "node e2e/c2-smoke.mjs",
+    "test:e2e:c3": "node e2e/c3-smoke.mjs",
+    "test:e2e:d1": "node e2e/d1-smoke.mjs"
+  },
+  "dependencies": {
+    "axios": "1.21.0",
+    "element-plus": "2.14.8",
+    "pinia": "3.0.4",
+    "vue": "3.5.45",
+    "vue-router": "4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@vitejs/plugin-vue": "6.0.10",
+    "playwright": "1.58.2",
+    "typescript": "5.9.3",
+    "vite": "8.3.6",
+    "vitest": "5.1.0",
+    "vue-tsc": "3.3.14"
+  }
+}

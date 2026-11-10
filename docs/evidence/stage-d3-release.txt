@@ -1,0 +1,25 @@
+== container health ==
+burger-order-lab-backend-1 Up 19 minutes (healthy)
+burger-order-lab-frontend-1 Up 17 minutes (healthy)
+burger-order-lab-mysql-1 Up 4 hours (healthy)
+burger-order-lab-redis-1 Up 3 minutes (healthy)
+== deployment endpoints ==
+deployment verification passed: frontend=18081 backend=18080
+== security ==
+security check passed
+frontend headers: nosniff/DENY/referrer
+unauthenticated /api/orders=401
+backend container uid=999
+.env and backups/ are ignored
+== latest backup ==
+-rw-------@ 1 unravel  staff  10798 Nov  9 23:20 backups/burger_order-20261109T152056Z.sql.gz
+{"createdAt":"20261109T152056Z","database":"burger_order","file":"burger_order-20261109T152056Z.sql.gz","bytes":10798,"sha256":"7fd1a24718119ca570a3937fdafe0498469e228a7247163589f3ee2e028269cf"}
+
+== backend tests ==
+backend tests: 66
+== frontend tests ==
+      Tests  30 passed (30)
+== images ==
+burger-order-lab-frontend:latest fd62c984fdee 76.6MB
+burger-order-lab-backend:latest c14b69d5dd85 581MB
+release check completed
